@@ -52,6 +52,9 @@ class SemanticIndex:
             )
         )
 
+    def clear(self) -> None:
+        self._entries.clear()
+
     def search(
         self,
         query: str,

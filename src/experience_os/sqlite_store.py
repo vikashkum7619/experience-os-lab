@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from uuid import UUID
@@ -12,20 +13,15 @@ from experience_os.serializer import ExperienceSerializer
 class SQLiteExperienceStore(ExperienceStore):
     """
     SQLite-backed implementation of ExperienceStore.
-
-    Experiences are stored as serialized JSON, allowing the
-    Experience model to evolve without frequent schema changes.
     """
 
     def __init__(
         self,
         database_path: str | Path = "experience.db",
     ) -> None:
-        self._database_path = Path(database_path)
 
-        self._connection = sqlite3.connect(
-            self._database_path
-        )
+        self._connection = sqlite3.connect(str(database_path))
+        self._connection.row_factory = sqlite3.Row
 
         self._connection.execute(
             """
@@ -46,12 +42,9 @@ class SQLiteExperienceStore(ExperienceStore):
         self,
         experience: Experience,
     ) -> None:
-        """
-        Insert or update an experience.
-        """
 
         payload = ExperienceSerializer.to_dict(
-            experience,
+            experience
         )
 
         self._connection.execute(
@@ -62,11 +55,24 @@ class SQLiteExperienceStore(ExperienceStore):
             """,
             (
                 str(experience.id),
-                experience.model_dump_json(),
+                json.dumps(payload),
             ),
         )
 
         self._connection.commit()
+
+    # ---------------------------------------------------------
+    # Compatibility API
+    # ---------------------------------------------------------
+
+    def add(
+        self,
+        experience: Experience,
+    ) -> None:
+        """
+        Compatibility with the in-memory ExperienceStore.
+        """
+        self.save(experience)
 
     # ---------------------------------------------------------
     # Load
@@ -75,9 +81,6 @@ class SQLiteExperienceStore(ExperienceStore):
     def load_all(
         self,
     ) -> list[Experience]:
-        """
-        Load every stored experience.
-        """
 
         cursor = self._connection.execute(
             """
@@ -88,14 +91,17 @@ class SQLiteExperienceStore(ExperienceStore):
 
         experiences: list[Experience] = []
 
-        for (json_data,) in cursor.fetchall():
+        for row in cursor.fetchall():
+            payload = json.loads(row["data"])
+
             experiences.append(
-                Experience.model_validate_json(
-                    json_data,
-                )
+                ExperienceSerializer.from_dict(payload)
             )
 
         return experiences
+
+    def all(self) -> list[Experience]:
+        return self.load_all()
 
     # ---------------------------------------------------------
     # Delete
@@ -105,18 +111,25 @@ class SQLiteExperienceStore(ExperienceStore):
         self,
         experience_id: UUID,
     ) -> None:
-        """
-        Delete an experience.
-        """
 
         self._connection.execute(
             """
             DELETE FROM experiences
             WHERE id = ?
             """,
-            (
-                str(experience_id),
-            ),
+            (str(experience_id),),
+        )
+
+        self._connection.commit()
+
+    # ---------------------------------------------------------
+    # Clear
+    # ---------------------------------------------------------
+
+    def clear(self) -> None:
+
+        self._connection.execute(
+            "DELETE FROM experiences"
         )
 
         self._connection.commit()
@@ -125,18 +138,10 @@ class SQLiteExperienceStore(ExperienceStore):
     # Lifecycle
     # ---------------------------------------------------------
 
-    def close(
-        self,
-    ) -> None:
-        """
-        Close the SQLite connection.
-        """
-
+    def close(self) -> None:
         self._connection.close()
 
-    def __enter__(
-        self,
-    ) -> "SQLiteExperienceStore":
+    def __enter__(self):
         return self
 
     def __exit__(
@@ -144,5 +149,5 @@ class SQLiteExperienceStore(ExperienceStore):
         exc_type,
         exc,
         tb,
-    ) -> None:
+    ):
         self.close()

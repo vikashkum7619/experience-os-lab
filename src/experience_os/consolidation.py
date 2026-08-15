@@ -37,6 +37,7 @@ class ExperienceConsolidator:
         existing = self.find_duplicate(experience)
 
         if existing is None:
+            
             self._store.add(experience)
             return experience
 
